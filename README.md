@@ -1,7 +1,7 @@
 asio
 ======
 
-old repo [https://github.com/creationix/dukluv](creationix/dukluv)
+old repo [creationix/dukluv](https://github.com/creationix/dukluv)
 
 LibUV bindings for duktape JS engine
 
