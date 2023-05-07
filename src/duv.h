@@ -3,43 +3,32 @@
 
 #include "uv.h"
 #include "duktape.h"
+#if DUK_VERSION >= 19999
+#include "duk_v1_compat.h"
+#endif
 #include <assert.h>
 
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
 
-#if _MSC_VER >= 1800
+//#if _MSC_VER >= 1800
 #include <stdbool.h>
-#else
-typedef enum { false, true } bool;
-#endif
+//#else
+//typedef enum { false, true } bool;
+//#endif
 
 #if defined(_WIN32)
 # include <fcntl.h>
 # include <sys/types.h>
 # include <sys/stat.h>
-#ifndef  S_ISREG
 # define S_ISREG(x)  (((x) & _S_IFMT) == _S_IFREG)
-#endif
-#ifndef  S_ISDIR
 # define S_ISDIR(x)  (((x) & _S_IFMT) == _S_IFDIR)
-#endif
-#ifndef  S_ISFIFO
 # define S_ISFIFO(x) (((x) & _S_IFMT) == _S_IFIFO)
-#endif
-#ifndef  S_ISCHR
 # define S_ISCHR(x)  (((x) & _S_IFMT) == _S_IFCHR)
-#endif
-#ifndef  S_ISBLK
 # define S_ISBLK(x)  0
-#endif
-#ifndef  S_ISLINK
 # define S_ISLNK(x)  0
-#endif
-#ifndef  S_ISSOCK
 # define S_ISSOCK(x) 0
-#endif
 #endif
 
 #ifndef PATH_MAX
@@ -68,6 +57,17 @@ typedef enum { false, true } bool;
 #define DUV_FS_EVENT 1
 #define DUV_FS_POLL 1
 
+typedef struct {
+	int object;
+	duk_context *thread;
+} duv_thread_req_t;
+
+typedef struct {
+	duk_ret_t (*bind)(duk_context *);
+	int alive;
+} duv_thread_env_t;
+duv_thread_env_t duv_thread_env;
+
 // Ref for userdata and event callbacks
 typedef struct {
   int ref;
@@ -83,6 +83,8 @@ typedef struct {
   void* data; // extra data
 } duv_req_t;
 
+duk_ret_t duv_stop_all_workers(duk_context *ctx);
+duk_ret_t duv_bind_js(duk_context *ctx);
 duk_ret_t dukopen_uv(duk_context *ctx);
 
 #include "refs.h"
@@ -92,3 +94,4 @@ duk_ret_t dukopen_uv(duk_context *ctx);
 #include "callbacks.h"
 
 #endif
+

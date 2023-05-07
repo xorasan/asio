@@ -20,6 +20,7 @@ duk_ret_t duv_chdir(duk_context *ctx);
 duk_ret_t duv_get_total_memory(duk_context *ctx);
 duk_ret_t duv_hrtime(duk_context *ctx);
 duk_ret_t duv_update_time(duk_context *ctx);
+duk_ret_t duv_sleep(duk_context *ctx);
 duk_ret_t duv_now(duk_context *ctx);
 duk_ret_t duv_argv(duk_context *ctx);
 

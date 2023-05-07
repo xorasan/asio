@@ -6,6 +6,7 @@
 #include "req.h"
 #include "handle.h"
 #include "timer.h"
+#include "thread.h"
 #include "stream.h"
 #include "tcp.h"
 #include "pipe.h"
@@ -24,6 +25,9 @@ static const duk_function_list_entry duv_funcs[] = {
 
   // handle.c
   {"close", duv_close, 2},
+
+  // thread.c
+  {"thread", duv_thread, 3},
 
   // timer.c
   {"new_timer", duv_new_timer, 0},
@@ -122,6 +126,7 @@ static const duk_function_list_entry duv_funcs[] = {
   {"update_time", duv_update_time, 0},
   {"now", duv_now, 0},
   {"argv", duv_argv, 0},
+  {"sleep", duv_sleep, 1},
 
   // miniz.c
   {"inflate", duv_tinfl, 2},
@@ -130,9 +135,37 @@ static const duk_function_list_entry duv_funcs[] = {
   {NULL, NULL, 0},
 };
 
+duk_ret_t duv_stop_all_workers(duk_context *ctx) {
+	duk_push_heap_stash(ctx);
+	duk_get_prop_string(ctx, -1, "refs");
+	duk_remove(ctx, -2); // heap stash
+	duk_size_t length = duk_get_length(ctx, -1); // refs.length
+	for (int i = 1; i < length; ++i) {
+		duv_push_ref(ctx, i);
+		
+		if (duk_is_object(ctx, -1) && duk_has_prop_string(ctx, -1, "req")) {
+			duk_get_prop_string(ctx, -1, "req");
+			uv_work_t *work_req = duk_get_buffer(ctx, -1, NULL);
+			const char *name = uv_req_type_name( work_req->type );
+			if (uv_cancel((uv_req_t*) work_req)) {
+				printf("[%d] %s pending\n", i, name);
+			} else {
+				printf("[%d] %s cancelled\n", i, name);
+			}
+			duk_pop(ctx); // pop sub val
+		}
 
+		duk_pop(ctx);  // pop val
+	}
+	duk_pop(ctx); // refs array
+}
+duk_ret_t duv_bind_js(duk_context *ctx) {
+  // Create a uv table on the global
+  duk_push_object(ctx);
+  duk_put_function_list(ctx, -1, duv_funcs);
+  return 1;
+}
 duk_ret_t dukopen_uv(duk_context *ctx) {
-
   duv_ref_setup(ctx);
 
   // Create a uv table on the global

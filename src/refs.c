@@ -47,7 +47,7 @@ int duv_ref(duk_context *ctx) {
   duk_insert(ctx, -2);
 
   // refs[ref] = value
-  duk_put_prop_index(ctx, -2, ref);
+  duk_put_prop_index(ctx, -2, ref); // eats value
 
   // Remove the refs array from the stack.
   duk_pop(ctx);

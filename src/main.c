@@ -395,7 +395,68 @@ static duk_ret_t duv_mod_compile(duk_context *ctx) {
   return 1;
 }
 
-static duk_ret_t duv_main(duk_context *ctx) {
+#if DUK_VERSION >= 19999  /* duk_safe_call() udata added in 2.0.0 (1.99.99 is pre-release) */
+static duk_ret_t duv_stash_argv(duk_context *ctx, void *udata) {
+#else
+static duk_ret_t duv_stash_argv(duk_context *ctx) {
+#endif
+  char **argv = (char **) duk_require_pointer(ctx, 0);
+  int argc = (int) duk_require_int(ctx, 1);
+  int i;
+
+#if DUK_VERSION >= 19999  /* duk_safe_call() udata added in 2.0.0 (1.99.99 is pre-release) */
+  (void) udata;
+#endif
+
+  duk_push_global_stash(ctx);
+  duk_push_array(ctx);
+  for (i = 0; i < argc; i++) {
+    duk_push_string(ctx, argv[i]);
+    duk_put_prop_index(ctx, -2, i);
+  }
+  duk_put_prop_string(ctx, -2, "argv");
+  duk_pop(ctx);
+  return 0;
+}
+
+#if DUK_VERSION >= 19999
+// Print/alert provider with Duktape 1.x semantics.
+static duk_ret_t duv_print_alert_helper(duk_context *ctx, FILE *fh) {
+  duk_idx_t nargs, i;
+  const duk_uint8_t *buf;
+  duk_size_t sz_buf;
+  const char nl = (const char) '\n';
+
+  nargs = duk_get_top(ctx);
+  if (nargs == 1 && duk_is_buffer(ctx, 0)) {
+    buf = (const duk_uint8_t *) duk_get_buffer(ctx, 0, &sz_buf);
+    fwrite((const void *) buf, 1, (size_t) sz_buf, fh);
+    return 0;
+  }
+  /* Coerce all arguments before writing anything so that if there are
+   * side effects with print() calls, they are written first.
+   */
+  duk_push_string(ctx, " ");
+  duk_insert(ctx, 0);
+  duk_join(ctx, nargs);
+  fprintf(fh, "%s\n", duk_to_string(ctx, -1));
+  return 0;
+}
+static duk_ret_t duv_print(duk_context *ctx) {
+  return duv_print_alert_helper(ctx, stdout);
+}
+static duk_ret_t duv_alert(duk_context *ctx) {
+  return duv_print_alert_helper(ctx, stderr);
+}
+#endif
+
+static duk_ret_t duv_bind_funcs(duk_context *ctx) {
+  // Minimal print/alert (removed in Duktape 2.x)
+  duk_push_global_object(ctx);
+  duk_push_string(ctx, "print");
+  duk_push_c_function(ctx, duv_print, DUK_VARARGS);
+  duk_def_prop(ctx, -3, DUK_DEFPROP_HAVE_VALUE | DUK_DEFPROP_SET_WRITABLE | DUK_DEFPROP_SET_CONFIGURABLE);
+  duk_pop(ctx);
 
   duk_push_global_object(ctx);
   duk_dup(ctx, -1);
@@ -422,12 +483,19 @@ static duk_ret_t duv_main(duk_context *ctx) {
   duk_put_prop_string(ctx, -2, "loadlib");
   duk_pop(ctx);
 
+  duk_eval_string_noresult(ctx, "Object.defineProperty(Duktape, 'modLoaded', { value: {}, writable: true, enumerable: false, configurable: true });");
+
   // Put in some quick globals to test things.
   duk_push_c_function(ctx, duv_path_join, DUK_VARARGS);
   duk_put_prop_string(ctx, -2, "pathJoin");
 
   duk_push_c_function(ctx, duv_loadfile, 1);
   duk_put_prop_string(ctx, -2, "loadFile");
+  
+  duk_pop(ctx);
+}
+static duk_ret_t duv_main(duk_context *ctx) {
+  duv_bind_funcs(ctx);
 
   // require.call({id:uv.cwd()+"/main.c"}, path);
   duk_push_c_function(ctx, duv_require, 1);
@@ -440,6 +508,7 @@ static duk_ret_t duv_main(duk_context *ctx) {
     duk_put_prop_string(ctx, -2, "modulePrototype");
     duk_pop(ctx);
   }
+
   duk_push_object(ctx);
   duk_push_c_function(ctx, duv_cwd, 0);
   duk_call(ctx, 0);
@@ -451,22 +520,6 @@ static duk_ret_t duv_main(duk_context *ctx) {
 
   uv_run(&loop, UV_RUN_DEFAULT);
 
-  return 0;
-}
-
-static duk_ret_t duv_stash_argv(duk_context *ctx) {
-  char **argv = (char **) duk_require_pointer(ctx, 0);
-  int argc = (int) duk_require_int(ctx, 1);
-  int i;
-
-  duk_push_global_stash(ctx);
-  duk_push_array(ctx);
-  for (i = 0; i < argc; i++) {
-    duk_push_string(ctx, argv[i]);
-    duk_put_prop_index(ctx, -2, i);
-  }
-  duk_put_prop_string(ctx, -2, "argv");
-  duk_pop(ctx);
   return 0;
 }
 
@@ -482,7 +535,16 @@ static void duv_dump_error(duk_context *ctx, duk_idx_t idx) {
   }
 }
 
+static void duv_fatal(void *udata, const char *msg) {
+  (void) udata;
+  fprintf(stderr, "*** FATAL ERROR: %s\n", (msg ? msg : "no message"));
+  fflush(stderr);
+  abort();
+}
+
 int main(int argc, char *argv[]) {
+  duv_thread_env.bind = duv_bind_funcs;
+
   duk_context *ctx = NULL;
   uv_loop_init(&loop);
 
@@ -494,24 +556,30 @@ int main(int argc, char *argv[]) {
   }
 
   // Tie loop and context together
-  ctx = duk_create_heap(NULL, NULL, NULL, &loop, NULL);
+  ctx = duk_create_heap(NULL, NULL, NULL, &loop, duv_fatal);
   if (!ctx) {
-    fprintf(stderr, "Problem initiailizing duktape heap\n");
+    fprintf(stderr, "Problem initializing duktape heap\n");
     return -1;
   }
   loop.data = ctx;
 
-  // Stash argv for later access
-  duk_push_pointer(ctx, (void *) argv);
-  duk_push_int(ctx, argc);
-  if (duk_safe_call(ctx, duv_stash_argv, 2, 1)) {
-    duv_dump_error(ctx, -1);
-    uv_loop_close(&loop);
-    duk_destroy_heap(ctx);
-    return 1;
-  }
-  duk_pop(ctx);
+//  duk_logging_init(ctx, 0 /*flags*/);
 
+//  // Stash argv for later access
+//  duk_push_pointer(ctx, (void *) argv);
+//  duk_push_int(ctx, argc);
+//#if DUK_VERSION >= 19999  /* duk_safe_call() udata added in 2.0.0 (1.99.99 is pre-release) */
+//  if (duk_safe_call(ctx, duv_stash_argv, NULL, 2, 1)) {
+//#else
+//  if (duk_safe_call(ctx, duv_stash_argv, 2, 1)) {
+//#endif
+//    duv_dump_error(ctx, -1);
+//    uv_loop_close(&loop);
+//    duk_destroy_heap(ctx);
+//    return 1;
+//  }
+//  duk_pop(ctx);
+//
   duk_push_c_function(ctx, duv_main, 1);
   duk_push_string(ctx, argv[1]);
   if (duk_pcall(ctx, 1)) {
@@ -525,3 +593,4 @@ int main(int argc, char *argv[]) {
   duk_destroy_heap(ctx);
   return 0;
 }
+

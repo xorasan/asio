@@ -49,6 +49,19 @@ duk_ret_t duv_set_process_title(duk_context *ctx) {
   return 0;
 }
 
+duk_ret_t duv_sleep(duk_context *ctx) {
+  u_int ms;
+
+  dschema_check(ctx, (const duv_schema_entry[]) {
+    {"ms", duk_is_number},
+    {NULL}
+  });
+
+  ms = duk_get_number(ctx, 0);
+  uv_sleep(ms);
+  return 0;
+}
+
 duk_ret_t duv_resident_set_memory(duk_context *ctx) {
   size_t rss;
   duv_check(ctx, uv_resident_set_memory(&rss));
